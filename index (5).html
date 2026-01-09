@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MMiD Academy Quiz Time</title>
+<style>
+body { margin:0; font-family:'Arial Black', Arial, sans-serif; background: radial-gradient(circle at center, #020024, #000); color:#fff; }
+header { background:linear-gradient(90deg,#ff8c00,#ffb347); padding:15px; display:flex; align-items:center; justify-content:center; gap:20px; }
+header img { height:60px; }
+header h1 { font-size:36px; }
+#container { display:flex; height:calc(100vh - 100px); }
+#main { flex:3; padding:40px; }
+#scores { flex:1; background:#080808; border-left:5px solid #ff8c00; padding:20px; }
+#scores h2 { text-align:center; color:#ffd700; }
+#join, #waiting { text-align:center; margin-top:80px; }
+#join input { padding:15px; font-size:20px; width:280px; border-radius:10px; border:none; }
+#join button { margin-top:20px; padding:15px 30px; font-size:22px; background:#ff8c00; border:none; border-radius:10px; cursor:pointer; }
+#question { display:none; }
+#timer { font-size:64px; color:#ffd700; }
+#qtext { font-size:34px; margin:30px 0; }
+.answers { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+.answer { background:#111; border:2px solid #ff8c00; border-radius:14px; padding:20px; font-size:20px; cursor:pointer; }
+.answer:hover { background:#ff8c00; color:#000; }
+.correct { background:#00c853 !important; color:#000; }
+.wrong { background:#b00020 !important; }
+#controls button { width:100%; padding:18px; font-size:22px; border:none; border-radius:10px; background:#ff8c00; cursor:pointer; margin-top:10px; }
+.score { background:#111; padding:12px; margin:10px 0; border-radius:10px; font-size:20px; box-shadow:0 0 10px rgba(255,140,0,0.6); }
+#winnerScreen { text-align:center; margin-top:80px; display:none; }
+#winnerScreen h2 { font-size:48px; color:#ffd700; }
+.hidden { display:none; }
+</style>
+</head>
+<body>
+
+<header>
+<img src="https://uploads.onecompiler.io/44a3fspvj/44a3bm35r/MMID%20Academy%20logo.png">
+<h1>MMiD Academy Quiz Time</h1>
+</header>
+
+<div id="container">
+<div id="main">
+
+<div id="join">
+<h2>Enter your name to join</h2>
+<input id="nameInput" placeholder="Your name"><br>
+<button onclick="joinGame()">Join Game</button>
+</div>
+
+<div id="waiting" class="hidden">
+<h2>Waiting for host to start...</h2>
+</div>
+
+<div id="question">
+<div id="timer">10</div>
+<div id="qtext"></div>
+<div class="answers" id="answers"></div>
+</div>
+
+<div id="winnerScreen">
+<h2>🏆 WINNER 🏆</h2>
+<div id="winnerText"></div>
+</div>
+
+<div id="controls" class="hidden">
+<button id="startBtn" onclick="startGame()">▶ Start Game</button>
+<button id="nextBtn" class="hidden" onclick="nextQuestion()">➡ Next Question</button>
+</div>
+
+</div>
+
+<div id="scores">
+<h2>🏆 Live Scores</h2>
+<div id="scoreList"></div>
+</div>
+</div>
+
+<!-- Firebase -->
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+
+<script>
+// ==== FIREBASE CONFIG ====
+const firebaseConfig = {
+  apiKey: "AIzaSyAJIFH1MMAgVv8sKImhDEE3KlQ1IY8MCJQ",
+  authDomain: "mmidquiz.firebaseapp.com",
+  databaseURL: "https://mmidquiz-default-rtdb.firebaseio.com",
+  projectId: "mmidquiz",
+  storageBucket: "mmidquiz.firebasestorage.app",
+  messagingSenderId: "895721772784",
+  appId: "1:895721772784:web:b1ae5091269595be28d435",
+  measurementId: "G-P2RF84RZZ6"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
+// Detect host
+const params = new URLSearchParams(window.location.search);
+const isHost = params.get("host")==="1";
+
+// Questions
+const questions = [
+  { q:"What does MMiD stand for?", a:["Modern Media Design","Media, Marketing & Digital","Marketing Innovation"], c:1 },
+  { q:"How long do you have per question?", a:["5 seconds","10 seconds","20 seconds"], c:1 },
+  { q:"This quiz is inspired by?", a:["MasterChef","Who Wants to Be a Millionaire","The Apprentice"], c:1 }
+];
+
+let playerName="", current=-1, time=10, timer, answered=false;
+
+// Host sees controls
+if(isHost){
+  document.getElementById("controls").classList.remove("hidden");
+  document.getElementById("join").classList.add("hidden");
+  document.getElementById("waiting").classList.add("hidden");
+}
+
+// Player joins
+function joinGame(){
+  playerName = document.getElementById("nameInput").value.trim();
+  if(!playerName) return alert("Enter your name");
+  document.getElementById("join").classList.add("hidden");
+  document.getElementById("waiting").classList.remove("hidden");
+  db.ref("players/"+playerName).set({score:0});
+}
+
+// Listen to database changes
+db.ref().on("value", snapshot => {
+  const data = snapshot.val();
+  if(!data) return;
+
+  // Host set current question
+  if(data.currentQuestion!=null){
+    showQuestionDB(data.currentQuestion);
+  }
+
+  // Update live scores
+  if(data.players){
+    updateScoresDB(data.players);
+  }
+});
+
+// Host functions
+function startGame(){
+  current = 0;
+  db.ref("currentQuestion").set(current);
+  document.getElementById("nextBtn").classList.remove("hidden");
+}
+
+function nextQuestion(){
+  current++;
+  if(current>=questions.length){
+    endGameDB();
+    return;
+  }
+  db.ref("currentQuestion").set(current);
+}
+
+// Show question from database
+function showQuestionDB(qIndex){
+  const q = questions[qIndex];
+  document.getElementById("waiting").classList.add("hidden");
+  document.getElementById("question").style.display="block";
+  document.getElementById("qtext").innerText = q.q;
+
+  const answersDiv = document.getElementById("answers");
+  answersDiv.innerHTML="";
+  q.a.forEach((text,i)=>{
+    const btn = document.createElement("div");
+    btn.className="answer";
+    btn.innerText = text;
+    btn.onclick = ()=>answerDB(i);
+    answersDiv.appendChild(btn);
+  });
+
+  startTimer();
+}
+
+// Timer
+function startTimer(){
+  clearInterval(timer);
+  time=10;
+  document.getElementById("timer").innerText=time;
+  timer=setInterval(()=>{
+    time--;
+    document.getElementById("timer").innerText=time;
+    if(time<=0){ clearInterval(timer); revealDB(); }
+  },1000);
+}
+
+// Player answers
+function answerDB(choice){
+  if(answered) return;
+  answered=true;
+  const playerRef = db.ref("players/"+playerName+"/score");
+  db.ref("currentQuestion").once("value").then(snap=>{
+    const qIndex = snap.val();
+    if(questions[qIndex].c===choice){
+      playerRef.transaction(score => (score||0)+1);
+    }
+    revealDB();
+  });
+}
+
+// Reveal correct
+function revealDB(){
+  const qIndex = current;
+  [...document.getElementsByClassName("answer")].forEach((btn,i)=>{
+    btn.classList.add(i===questions[qIndex].c?"correct":"wrong");
+  });
+}
+
+// End game (host)
+function endGameDB(){
+  document.getElementById("question").style.display="none";
+  document.getElementById("winnerScreen").style.display="block";
+  db.ref("players").once("value").then(snap=>{
+    const players = snap.val();
+    const winner = Object.entries(players).sort((a,b)=>b[1].score - a[1].score)[0];
+    document.getElementById("winnerText").innerHTML = winner ? `${winner[0]}<br>Score: ${winner[1].score}` : "No winner";
+  });
+}
+
+// Update scores
+function updateScoresDB(players){
+  const list = document.getElementById("scoreList");
+  list.innerHTML="";
+  Object.entries(players).sort((a,b)=>b[1].score-a[1].score).forEach(([name,pl])=>{
+    list.innerHTML+=`<div class="score">${name}: ${pl.score}</div>`;
+  });
+}
+</script>
+</body>
+</html>
+
+
+
+
